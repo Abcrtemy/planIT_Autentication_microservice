@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  autenticate-app:
+    build:
+      context: .
+    container_name: autenticate-app
+    ports:
+      - "8001:8001"  
+    volumes:
+      - .:/app       
+    command: >
+      sh -c "python manage.py makemigrations &&
+              python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8001"
+    environment:
+      - DEBUG=True
+    networks:
+      - backendNetwork
+
+networks:
+  backendNetwork:
+    external: true
