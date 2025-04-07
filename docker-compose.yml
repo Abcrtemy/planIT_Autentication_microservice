@@ -5,6 +5,8 @@ services:
     build:
       context: .
     container_name: autenticate-app
+    labels:
+      - "traefik.http.routers.auth.rule=Host(`localhost`) && PathPrefix(`/auth`)"
     ports:
       - "8001:8001"  
     volumes:
