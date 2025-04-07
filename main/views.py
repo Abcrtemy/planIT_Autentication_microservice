@@ -1,11 +1,8 @@
 # from django.shortcuts import render
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenObtainPairView
 import random
 from django.core.cache import cache
 
-from django.views.decorators.csrf import csrf_exempt
 from rest_framework.views import APIView
 from rest_framework import viewsets
 from rest_framework.response import Response
@@ -21,61 +18,91 @@ from .serializers import UserSerializer
 from django.conf import settings
 
 
-class UserAction(viewsets.ViewSet):
-    def send_email_code(self, request):
-        email = request.data.get('email')
-        code = str(random.randint(100000, 999999))
-        cache.set(f"email_code:{email}", code, timeout=300)
+class Notification_service:
+    @staticmethod
+    def send_notification(text,type, email):
         request_data = {
-            "text": f"код для авторизации PlanIT: {code}",
-            "type": "email_code",
+            "text": text,
+            "type": type,
             "email_send": "True",
             "email": email
         }
-        try:
-            notification_service_url = settings.NOTIFICATION_SERVICE_URL + "/main/add/"  
-            response = requests.post(notification_service_url, json=request_data)
-            response.raise_for_status()
-            return Response({"messege": "sucsess"}, status=203)
-        except requests.RequestException as e:
-            print(f"Ошибка при отправке запроса в микросервис: {e}")
-            return Response({"messege": {e}}, status=403)
-        
-    def verefy_email_code(self, request):
-        email = request.data.get('email')
-        code = request.data.get('code')
+        notification_service_url = settings.NOTIFICATION_SERVICE_URL + "/main/add/"  
+        response = requests.post(notification_service_url, json=request_data)
+        response.raise_for_status()
+        # return True
+# account_enter
+# email_code
+# task_time
+# user_add_task
 
-        if not email or not code:
-            return Response({"error": "Email and code are required"}, status=400)
+
+class Email_service:
+    @staticmethod
+    def send_code(email):
+        code = str(random.randint(100000, 999999)) # добавить проверку на уникальность
+        cache.set(f"email_code:{email}", code, timeout=300)
+        Notification_service.send_notification(f"код для авторизации PlanIT: {code}", "email_code", email)
+
+    @staticmethod
+    def verefy_email(email, code):
         saved_code = cache.get(f"email_code:{email}")
-
         if not saved_code:
-            return Response({"error": "Code expired or invalid"}, status=400)
+            raise Exception(f"Code expired or invalid")
 
         if saved_code != code:
-            return Response({"error": "Invalid code"}, status=400)
-        return Response({"messege": "code is ok"}, status=200)
-        
-            
+            raise Exception(f"Invalid code")
+        return email
+    
 
-    def register(self, request):
-        serializer = UserSerializer(data = request.data)
+class User_service:
+    @staticmethod
+    def autenticate(email, code):
+        Email_service.verefy_email(email, code)
+        user = User.objects.get(email=email)
+        tokens = RefreshToken.for_user(user)
+        Notification_service.send_notification(f"В ваш аккаунт PlanIT был осуществлен вход", "account_enter", email)
+        return {
+            "access": str(tokens.access_token),
+            "refresh": str(tokens),
+        }
+    @staticmethod
+    def register(data):
+        serializer = UserSerializer(data = data)
+        Email_service.verefy_email(data['email'], data['code'])
         if serializer.is_valid():
-            user = serializer.save() # вызывает метод create в сериализаторе автоматом)
-            print("Перед сохранением:", user.password)
+            user = serializer.save() 
             user.refresh_from_db()
             tokens = RefreshToken.for_user(user)
-            access_token = str(tokens.access_token)
-            refresh_token = str(tokens)
-            return Response(
-                {
-                    "message": "Пользователь успешно зарегистрирован",
-                    "access": access_token,
-                    "refresh": refresh_token
-                },
-                status=status.HTTP_201_CREATED
-            )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            Notification_service.send_notification(f"Добро пожаловать в PlanIT", "account_enter", data['email'])
+            return {
+                "access": str(tokens.access_token),
+                "refresh": str(tokens),
+            }
+        raise Exception(f"Invalid data for user serializer")
+
+    
+class UserAction(viewsets.ViewSet):
+    def send_email_code(self, request):
+        try:
+            Email_service.send_code(request.data.get('email'))
+            return Response({"messege": "sucsess"}, status=203)
+        except Exception as e:
+            return Response(f"error: {e}", status=status.HTTP_400_BAD_REQUEST)
+    def autenticate(self, request):
+        try:
+            tokens = User_service.autenticate(request.data.get('email'), request.data.get('code'))
+            return Response(tokens, status=status.HTTP_202_ACCEPTED)
+        except Exception as e:
+            return Response(f"error: {e}", status=status.HTTP_400_BAD_REQUEST)
+    def register(self, request):
+        try:
+            tokens = User_service.autenticate(request.data.get('email'), request.data.get('code'))
+            return Response(tokens, status=status.HTTP_202_ACCEPTED)
+        except Exception as e:
+            return Response(f"error: {e}", status=status.HTTP_400_BAD_REQUEST)
+            
+
     def get_email(self, request):
         user_id = request.data.get("user_id")
         try:
@@ -86,28 +113,6 @@ class UserAction(viewsets.ViewSet):
                 raise KeyError("User has no email")
         except Exception as e:
             return Response({"messege": str(e)}, status=403)
-
-class CustomTokenObtainPairView(TokenObtainPairView):
-    def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
-        if response.status_code == 200: 
-            tokens = response.data
-
-            access_token = AccessToken(tokens["access"]) 
-            user_id = access_token["user_id"]
-            request_data = {
-                "text": "В ваш аккаунт PlanIT был осуществлен вход",
-                "type": "account_enter",
-                "user_id": user_id,
-                "email_send": "True"
-            }
-
-            try:
-                notification_service_url = settings.NOTIFICATION_SERVICE_URL + "/main/add/"  
-                requests.post(notification_service_url, json=request_data)
-            except requests.RequestException as e:
-                print(f"Ошибка при отправке запроса в микросервис: {e}")
-        return response
 
 
 class ValidateTokenView(APIView):

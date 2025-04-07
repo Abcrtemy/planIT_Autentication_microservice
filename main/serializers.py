@@ -3,14 +3,24 @@ from .models import User
 
 class UserSerializer(serializers.ModelSerializer):
 
+#     class Meta:
+#         model = User
+#         fields = ['login', 'password']
+#     def create(self, validated_data):
+#         user = User.objects.create_user(
+#             login = validated_data['login'],
+#             password = validated_data['password'],
+#         )
+#         # user.set_password(validated_data['password'])  # Хешируем пароль!
+#         user.save()
+#         return user
     class Meta:
         model = User
-        fields = ['login', 'password']
-
+        fields = ['email']
     def create(self, validated_data):
         user = User.objects.create_user(
-            login = validated_data['login'],
-            password = validated_data['password'],
+            login = validated_data['email'],
+            email = validated_data['email'],
         )
         # user.set_password(validated_data['password'])  # Хешируем пароль!
         user.save()
